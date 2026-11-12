@@ -3,13 +3,17 @@ import { nameToEmail } from './dates.js';
 let sb;
 let domain;
 let me = null;
+let space;
 
 const PREF_COLUMNS = 'notify_events, remind_before, notify_deadlines, notify_todo, notify_shopping, notify_films';
 
 export async function init(config) {
   const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm');
-  sb = createClient(config.supabaseUrl, config.supabaseAnonKey);
+  // Krarim lives on the same address and uses the same project, so the login is kept
+  // under Kririm's own key; otherwise one site would pick up the other's session.
+  sb = createClient(config.supabaseUrl, config.supabaseAnonKey, { auth: { storageKey: 'kririm-auth' } });
   domain = config.loginDomain;
+  space = config.loginDomain.split('.')[0];
 }
 
 function check({ data, error }) {
@@ -27,7 +31,12 @@ const toPrefs = (p) => ({
 });
 
 async function loadProfile(id) {
-  const p = check(await sb.from('profiles').select(`id, name, ${PREF_COLUMNS}`).eq('id', id).single());
+  const p = check(await sb.from('profiles').select(`id, name, space, ${PREF_COLUMNS}`).eq('id', id).single());
+  // Only Kririm's own accounts belong here.
+  if (p.space !== space) {
+    await sb.auth.signOut({ scope: 'local' });
+    return null;
+  }
   me = { id: p.id, name: p.name, prefs: toPrefs(p) };
   return me;
 }
@@ -40,7 +49,9 @@ export async function getSession() {
 export async function signIn(name, password) {
   const { data, error } = await sb.auth.signInWithPassword({ email: nameToEmail(name, domain), password });
   if (error) throw new Error('Forkert navn eller adgangskode');
-  return loadProfile(data.user.id);
+  const profile = await loadProfile(data.user.id);
+  if (!profile) throw new Error('Forkert navn eller adgangskode');
+  return profile;
 }
 
 export async function signOut() {
